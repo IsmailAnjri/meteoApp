@@ -1,35 +1,78 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="body_large">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Meteo App{% endblock %}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        body, html {
-            height: 100%;
-            margin: 0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            font-size: 1.5rem;
-            font-family: Arial, sans-serif;
-        }
-        .container {
-            text-align: center;
-        }
-    </style>
+    {% load static %}
+    <link rel="stylesheet" href="{% static 'style.css' %}">
 </head>
 <body>
 <div class="container text-center">
     <h1>Welcome to Meteo App</h1>
     {% block content %}
         {% if user.is_authenticated %}
-            <form action="{% url 'logout' %}" method="post">
-                {% csrf_token %}
-                <button type="submit">Log Out</button>
-            </form>
+    <div class="button-container">
+        <form action="{% url 'logout' %}" method="post">
+            {% csrf_token %}
+            <button type="submit" class="logout-btn">Log Out</button>
+        </form>
+        {% if user.is_superuser %}
+            <button type="button" class="btn btn-primary" onclick="location.href='/admin_dashboard/'">Admin Dashboard</button>
+        {% endif %}
+    </div>
         <h2> Hi {{ user.username }}! </h2>
+    <div id="fav-city-section" class="mb-4">
+    <button id="add-city-btn" class="btn btn-success">
+    {% if fav_city %}
+        {{ fav_city }}{% if fav_city_temp is not None %} ({{ fav_city_temp }}°C){% endif %}
+    {% else %}
+        ADD A FAVOURITE CITY
+    {% endif %}
+    </button>
+    <form id="city-form" class="d-none mt-2" method="POST">
+        {% csrf_token %}
+        <input type="text" id="city-input" name="city" class="form-control" placeholder="Enter city name">
+        <button type="submit" class="btn btn-primary mt-2">Submit</button>
+        <p id="city-feedback" class="mt-2"></p>
+    </form>
+    </div>
+
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    const btn = document.getElementById("add-city-btn");
+    const form = document.getElementById("city-form");
+    const input = document.getElementById("city-input");
+    const feedback = document.getElementById("city-feedback");
+
+    btn.addEventListener("click", function () {
+        form.classList.toggle("d-none");
+        feedback.textContent = "";
+        input.value = "";
+    });
+
+    form.addEventListener("submit", function (e) {
+        e.preventDefault();
+        const city = input.value.trim();
+
+        fetch(`/search_city/?city=${encodeURIComponent(city)}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.found) {
+                    btn.textContent = `${data.city} (${data.temp}°C)`;
+                    feedback.textContent = "";
+                    form.classList.add("d-none");
+                } else {
+                    feedback.textContent = "City not found. Try another.";
+                    feedback.style.color = "red";
+                }
+            });
+    });
+});
+</script>
+
     <p>Check the temperature at your location or explore random cities.</p>
     <div class="btn-group" role="group">
         <button type="button" class="btn btn-primary" onclick="location.href='/meteo/'">Your Location</button>

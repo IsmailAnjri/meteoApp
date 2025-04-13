@@ -12,3 +12,13 @@ class Worldcities(models.Model):
     class Meta:
         managed = False
         db_table = 'worldcities'
+
+class FavouriteCity(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    city = models.CharField(max_length=100)
+
+    def __str__(self):
+        return f"{self.user.username} - {self.city}"
+
+
+

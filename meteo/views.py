@@ -2,49 +2,77 @@ from datetime import datetime
 
 import geocoder
 import requests
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
 from django.template import loader
 from meteo.models import Worldcities
 from django.shortcuts import render, redirect
 from django.contrib import messages
 from django.contrib.auth import authenticate, login
-from django.contrib.auth.decorators import login_required
+from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib.auth.models import User
 from .models import *
+from collections import defaultdict
+from django.views.decorators.http import require_GET
+from django.views.decorators.csrf import csrf_exempt
+from .models import FavouriteCity
 
 
 # Create your views here.
+@login_required(login_url='/login/')
 def home(request):
-    template = loader.get_template('index.html')
-    return HttpResponse(template.render({}, request))
+    fav_record = FavouriteCity.objects.filter(user=request.user).first()
+    fav_city = fav_record.city if fav_record else None
 
+    temp = None
+    if fav_record:
+        city_obj = Worldcities.objects.filter(city__iexact=fav_record.city).first()
+        if city_obj:
+            temp = get_temp([city_obj.lat, city_obj.lng])
+
+    return render(request, 'index.html', {
+        'fav_city': fav_city,
+        'fav_city_temp': temp
+    })
+
+
+def staff_only(user):
+    return user.is_authenticated and user.is_staff
+
+@login_required(login_url='/login/')
+@user_passes_test(lambda u: u.is_staff, login_url='/permission-denied/')
+def admin_page(request):
+    users = User.objects.all()  # Fetch users from the auth_user table
+    return render(request, 'admin_dash.html', {'users': users})
+def permission_denied(request):
+    return render(request, 'permission_denied.html')
 
 def login_page(request):
-    # Check if the HTTP request method is POST (form submission)
     if request.method == "POST":
         username = request.POST.get('username')
         password = request.POST.get('password')
+        next_url = request.GET.get('next') or request.POST.get('next')  # Handle both GET and POST
 
-        # Check if a user with the provided username exists
-        if not User.objects.filter(username=username).exists():
-            # Display an error message if the username does not exist
-            messages.error(request, 'Invalid Username')
-            return redirect('/login/')
-
-        # Authenticate the user with the provided username and password
         user = authenticate(username=username, password=password)
 
         if user is None:
-            # Display an error message if authentication fails (invalid password)
-            messages.error(request, "Invalid Password")
-            return redirect('/login/')
-        else:
-            # Log in the user and redirect to the home page upon successful login
-            login(request, user)
-            return redirect('/')
+            messages.error(request, "Invalid credentials")
+            return redirect('/login/')  # You might want to keep 'next' here too
 
-    # Render the login page template (GET request)
-    return render(request, 'login_page.html')
+        login(request, user)
+
+        # Handle redirection after login
+        if next_url:
+            if user.is_staff:
+                return redirect(next_url)
+            else:
+                return redirect('/permission-denied/')
+        else:
+            return redirect('/home')  # Default landing
+
+    # GET request
+    next_url = request.GET.get('next', '')
+    return render(request, 'registration/login.html', {'next': next_url})
+
 
 
 def register_page(request):
@@ -81,33 +109,116 @@ def register_page(request):
     # Render the registration page template (GET request)
     return render(request, 'register.html')
 
+
+
 def temp_somewhere(request):
-    random_item = Worldcities.objects.all().order_by('?').first()
-    city = random_item.city
-    location = [random_item.lat, random_item.lng]
-    temp = get_temp(location)
-    template = loader.get_template('meteo.html')
-    context = {
-        'city': city,
-        'temp': temp}
-    return HttpResponse(template.render(context, request))
+    # Pick a random city
+    random_city = Worldcities.objects.order_by('?').first()
+    city_name = random_city.city
+    temp = get_temp([random_city.lat, random_city.lng])
+
+    # Pick 20 random cities (excluding the selected one)
+    random_cities = list(Worldcities.objects.exclude(city=city_name).order_by('?')[:20])
+
+    # Find 5 cities with the same temperature
+    similar_cities = [city.city for city in random_cities if get_temp([city.lat, city.lng]) == temp][:5]
+    if not similar_cities:
+        return temp_somewhere(request)
+
+    # Group cities by temperature
+    temp_city_map = defaultdict(list)
+    for city in random_cities:
+        city_temp = get_temp([city.lat, city.lng])
+        temp_city_map[city_temp].append(city.city)
+
+    # Select 5 different temperatures for the chart
+    temp_chart_data = list(temp_city_map.items())[:5]
+
+    return render(request, "meteo.html", {
+        "city": city_name,
+        "temp": temp,
+        "similar_cities": similar_cities,
+        "temp_chart_data": temp_chart_data
+    })
 
 def temp_here(request):
+    # Get the latitude and longitude of the user's location
     location = geocoder.ip('me').latlng
     temp = get_temp(location)
+
+    # Pick 20 random cities (excluding the selected one) and find cities with the same temperature
+    random_cities = list(Worldcities.objects.exclude(city='Your location').order_by('?')[:20])
+
+    # Find cities with the same temperature
+    similar_cities = [city.city for city in random_cities if get_temp([city.lat, city.lng]) == temp][:5]
+    if not similar_cities:
+        return temp_somewhere(request)
+
+    # Group cities by temperature for chart data
+    temp_city_map = defaultdict(list)
+    for city in random_cities:
+        city_temp = get_temp([city.lat, city.lng])
+        temp_city_map[city_temp].append(city.city)
+
+    # Select 5 different temperatures for the chart
+    temp_chart_data = list(temp_city_map.items())[:5]
+
+    # Render the template with the necessary context
     template = loader.get_template('meteo.html')
     context = {
         'city': 'Your location',
-        'temp': temp
+        'temp': temp,
+        'similar_cities': similar_cities,
+        'temp_chart_data': temp_chart_data
     }
+
     return HttpResponse(template.render(context, request))
 
 
+
 def get_temp(location):
+    """Fetch the current temperature from Open-Meteo API and return the rounded integer."""
     endpoint = "http://api.open-meteo.com/v1/forecast"
     api_request = f"{endpoint}?latitude={location[0]}&longitude={location[1]}&hourly=temperature_2m"
     now = datetime.now()
     hour = now.hour
     meteo_data = requests.get(api_request).json()
-    temp = meteo_data['hourly']['temperature_2m'][hour]
+    temp = round(meteo_data['hourly']['temperature_2m'][hour])  # Round temperature to nearest integer
     return temp
+
+
+def temp_chart(request, temp):
+    """Returns JSON data for cities with the given temperature"""
+    sampled_cities = Worldcities.objects.order_by('?')[:20]  # Get 50 random cities
+    matching_cities = [city.city for city in sampled_cities if get_temp([city.lat, city.lng]) == temp]
+
+    # Limit to 5 cities
+    matching_cities = matching_cities[:5]
+
+    chart_data = {
+        "labels": [f"{temp}°C"] * len(matching_cities),
+        "data": [len(matching_cities)]
+    }
+
+    return JsonResponse(chart_data)
+
+@require_GET
+@csrf_exempt
+@login_required
+def search_city(request):
+    city_query = request.GET.get('city', '').strip().lower()
+    if not city_query:
+        return JsonResponse({'found': False})
+
+    city = Worldcities.objects.filter(city__iexact=city_query).first()
+
+    if city:
+        FavouriteCity.objects.update_or_create(
+            user=request.user,
+            defaults={'city': city.city}
+        )
+        temp = get_temp([city.lat, city.lng])
+
+        return JsonResponse({'found': True, 'city': city.city, 'temp': temp})
+
+    return JsonResponse({'found': False})
