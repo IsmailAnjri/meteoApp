@@ -21,6 +21,13 @@
             <button type="button" class="btn btn-primary" onclick="location.href='/home/'">Back to Home</button>
         {% endif %}
     </div>
+        {% if messages %}
+            <div class="alert alert-primary" role="alert">
+                {% for message in messages %}
+                {{ message }}
+                {% endfor %}
+            </div>
+        {% endif %}
         <table class="table table-striped">
             <thead>
                 <tr>
@@ -31,6 +38,7 @@
                     <th>Last Name</th>
                     <th>Is Staff</th>
                     <th>Is Superuser</th>
+                    <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -43,6 +51,11 @@
                         <td>{{ user.last_name }}</td>
                         <td>{{ user.is_staff }}</td>
                         <td>{{ user.is_superuser }}</td>
+                        <td>
+                            <a href="{% url 'delete_user' user.id %}"
+                               class="btn btn-danger"
+                               onclick="return confirm('Are you sure you want to delete this user?');">Delete</a>
+                        </td>
                     </tr>
                 {% endfor %}
             </tbody>

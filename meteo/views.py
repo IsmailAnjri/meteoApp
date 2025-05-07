@@ -5,7 +5,7 @@ import requests
 from django.http import HttpResponse, JsonResponse
 from django.template import loader
 from meteo.models import Worldcities
-from django.shortcuts import render, redirect
+from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.contrib.auth import authenticate, login
 from django.contrib.auth.decorators import login_required, user_passes_test
@@ -41,7 +41,7 @@ def staff_only(user):
 @login_required(login_url='/login/')
 @user_passes_test(lambda u: u.is_staff, login_url='/permission-denied/')
 def admin_page(request):
-    users = User.objects.all()  # Fetch users from the auth_user table
+    users = User.objects.all()
     return render(request, 'admin_dash.html', {'users': users})
 def permission_denied(request):
     return render(request, 'permission_denied.html')
@@ -76,10 +76,10 @@ def login_page(request):
 
 
 def register_page(request):
-    # Check if the HTTP request method is POST (form submission)
     if request.method == 'POST':
         first_name = request.POST.get('first_name')
         last_name = request.POST.get('last_name')
+        email = request.POST.get('email')
         username = request.POST.get('username')
         password = request.POST.get('password')
 
@@ -95,6 +95,7 @@ def register_page(request):
         user = User.objects.create_user(
             first_name=first_name,
             last_name=last_name,
+            email=email,
             username=username
         )
 
@@ -107,31 +108,26 @@ def register_page(request):
         return redirect('/register/')
 
     # Render the registration page template (GET request)
-    return render(request, 'register.html')
+    return render(request, 'registration/register.html')
 
 
 
 def temp_somewhere(request):
-    # Pick a random city
     random_city = Worldcities.objects.order_by('?').first()
     city_name = random_city.city
     temp = get_temp([random_city.lat, random_city.lng])
 
-    # Pick 20 random cities (excluding the selected one)
     random_cities = list(Worldcities.objects.exclude(city=city_name).order_by('?')[:20])
 
-    # Find 5 cities with the same temperature
     similar_cities = [city.city for city in random_cities if get_temp([city.lat, city.lng]) == temp][:5]
     if not similar_cities:
         return temp_somewhere(request)
 
-    # Group cities by temperature
     temp_city_map = defaultdict(list)
     for city in random_cities:
         city_temp = get_temp([city.lat, city.lng])
         temp_city_map[city_temp].append(city.city)
 
-    # Select 5 different temperatures for the chart
     temp_chart_data = list(temp_city_map.items())[:5]
 
     return render(request, "meteo.html", {
@@ -142,28 +138,22 @@ def temp_somewhere(request):
     })
 
 def temp_here(request):
-    # Get the latitude and longitude of the user's location
     location = geocoder.ip('me').latlng
     temp = get_temp(location)
 
-    # Pick 20 random cities (excluding the selected one) and find cities with the same temperature
     random_cities = list(Worldcities.objects.exclude(city='Your location').order_by('?')[:20])
 
-    # Find cities with the same temperature
     similar_cities = [city.city for city in random_cities if get_temp([city.lat, city.lng]) == temp][:5]
     if not similar_cities:
         return temp_somewhere(request)
 
-    # Group cities by temperature for chart data
     temp_city_map = defaultdict(list)
     for city in random_cities:
         city_temp = get_temp([city.lat, city.lng])
         temp_city_map[city_temp].append(city.city)
 
-    # Select 5 different temperatures for the chart
     temp_chart_data = list(temp_city_map.items())[:5]
 
-    # Render the template with the necessary context
     template = loader.get_template('meteo.html')
     context = {
         'city': 'Your location',
@@ -188,7 +178,6 @@ def get_temp(location):
 
 
 def temp_chart(request, temp):
-    """Returns JSON data for cities with the given temperature"""
     sampled_cities = Worldcities.objects.order_by('?')[:20]  # Get 50 random cities
     matching_cities = [city.city for city in sampled_cities if get_temp([city.lat, city.lng]) == temp]
 
@@ -222,3 +211,15 @@ def search_city(request):
         return JsonResponse({'found': True, 'city': city.city, 'temp': temp})
 
     return JsonResponse({'found': False})
+
+@login_required(login_url='/login/')
+@user_passes_test(lambda u: u.is_staff, login_url='/permission-denied/')
+def delete_user(request, user_id):
+    user = get_object_or_404(User, id=user_id)
+    if user != request.user:
+        FavouriteCity.objects.filter(user=user).delete()
+        user.delete()
+        messages.success(request, 'User deleted successfully.')
+    else:
+        messages.warning(request, "You cannot delete yourself.")
+    return redirect('admin_dash')

@@ -12,6 +12,7 @@ urlpatterns = [
     path("", RedirectView.as_view(url="/home/", permanent=True)),
     path("home/", views.home, name="home"),
     path('admin_dashboard/', views.admin_page, name="admin_dash"),
+    path('delete_user/<int:user_id>/', views.delete_user, name='delete_user'),
     path('permission-denied/', views.permission_denied, name='permission_denied'),
     path('login/', views.login_page, name='login_page'),    # Login page
     path('register/', views.register_page, name='register'),  # Registration page
