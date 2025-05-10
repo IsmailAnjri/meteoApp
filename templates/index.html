@@ -23,60 +23,78 @@
         {% endif %}
     </div>
         <h2> Hi {{ user.username }}! </h2>
+        {% if last_location %}
+            <p> Your last location was {{ last_location }} ({{ last_location_temp }}°C) </p>
+        {% endif %}
+
     <div id="fav-city-section" class="mb-4">
-    <button id="add-city-btn" class="btn btn-success">
-    {% if fav_city %}
-        {{ fav_city }}{% if fav_city_temp is not None %} ({{ fav_city_temp }}°C){% endif %}
-    {% else %}
-        ADD A FAVOURITE CITY
-    {% endif %}
-    </button>
-    <form id="city-form" class="d-none mt-2" method="POST">
-        {% csrf_token %}
-        <input type="text" id="city-input" name="city" class="form-control" placeholder="Enter city name">
-        <button type="submit" class="btn btn-primary mt-2">Submit</button>
-        <p id="city-feedback" class="mt-2"></p>
-    </form>
+    {% for i, city, temp in cities %}
+        <div class="mb-3">
+            <button id="add-city-btn-{{ i }}" class="btn btn-success">
+                {% if city %}
+                    {{ city }}{% if temp is not None %} ({{ temp }}°C)
+                {% endif %}
+                {% else %}
+                    ADD A FAVOURITE CITY
+                {% endif %}
+            </button>
+            <form id="city-form-{{ i }}" class="d-none mt-2" method="POST">
+                {% csrf_token %}
+                <input type="text" name="city" class="form-control" placeholder="Enter city name">
+                <input type="hidden" name="slot" value="{{ i }}">
+                <button type="submit" class="btn btn-primary mt-2">Submit</button>
+                <p id="city-feedback-{{ i }}" class="mt-2"></p>
+            </form>
+        </div>
+    {% endfor %}
     </div>
 
 
 <script>
 document.addEventListener("DOMContentLoaded", function () {
-    const btn = document.getElementById("add-city-btn");
-    const form = document.getElementById("city-form");
-    const input = document.getElementById("city-input");
-    const feedback = document.getElementById("city-feedback");
+    for (let i = 1; i <= 4; i++) {
+        const btn = document.getElementById(`add-city-btn-${i}`);
+        const form = document.getElementById(`city-form-${i}`);
+        const input = form.querySelector("input[name='city']");
+        const feedback = document.getElementById(`city-feedback-${i}`);
 
-    btn.addEventListener("click", function () {
-        form.classList.toggle("d-none");
-        feedback.textContent = "";
-        input.value = "";
-    });
+        btn.addEventListener("click", function () {
+            form.classList.toggle("d-none");
+            feedback.textContent = "";
+            input.value = "";
+        });
 
-    form.addEventListener("submit", function (e) {
-        e.preventDefault();
-        const city = input.value.trim();
+        form.addEventListener("submit", function (e) {
+            e.preventDefault();
+            const city = input.value.trim();
 
-        fetch(`/search_city/?city=${encodeURIComponent(city)}`)
-            .then(response => response.json())
-            .then(data => {
-                if (data.found) {
-                    btn.textContent = `${data.city} (${data.temp}°C)`;
-                    feedback.textContent = "";
-                    form.classList.add("d-none");
-                } else {
-                    feedback.textContent = "City not found. Try another.";
-                    feedback.style.color = "red";
-                }
-            });
-    });
+            fetch(`/search_city/?city=${encodeURIComponent(city)}&slot=${i}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.found) {
+                        if (data.exists) {
+                            feedback.textContent = data.message;
+                            feedback.style.color = "orange";
+                        } else {
+                            btn.textContent = `${data.city} (${data.temp}°C)`;
+                            feedback.textContent = "";
+                            form.classList.add("d-none");
+                        }
+                    } else {
+                        feedback.textContent = "City not found. Try another.";
+                        feedback.style.color = "red";
+                    }
+                });
+        });
+    }
 });
 </script>
 
+
     <p>Check the temperature at your location or explore random cities.</p>
     <div class="btn-group" role="group">
-        <button type="button" class="btn btn-primary" onclick="location.href='/meteo/'">Your Location</button>
-        <button type="button" class="btn btn-secondary" onclick="location.href='/meteo/discover'">Explore Another Location</button>
+        <button type="button" class="btn btn-primary" onclick="location.href='/my_meteo/'">Check Your Location's Meteo</button>
+        <button type="button" class="btn btn-secondary" onclick="location.href='/random_city/'">Explore A Random Location's Meteo</button>
     </div>
         {% else %}
             <p>You are not logged in</p>

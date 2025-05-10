@@ -1,4 +1,6 @@
-from datetime import datetime
+import time
+from datetime import datetime, date, timedelta
+import random
 
 import geocoder
 import requests
@@ -14,26 +16,86 @@ from .models import *
 from collections import defaultdict
 from django.views.decorators.http import require_GET
 from django.views.decorators.csrf import csrf_exempt
-from .models import FavouriteCity
+from .models import UserCities
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 
 # Create your views here.
 @login_required(login_url='/login/')
 def home(request):
-    fav_record = FavouriteCity.objects.filter(user=request.user).first()
-    fav_city = fav_record.city if fav_record else None
+    fav_record = UserCities.objects.filter(user=request.user).first()
+    cities = []
+    temps = []
+    user_last_location = request.user.last_locations.order_by('-created_at').first()
+    last_location = ""
+    last_location_temp = ""
 
-    temp = None
     if fav_record:
-        city_obj = Worldcities.objects.filter(city__iexact=fav_record.city).first()
-        if city_obj:
-            temp = get_temp([city_obj.lat, city_obj.lng])
+        if user_last_location:
+            last_location = user_last_location.location_name
+            city = Worldcities.objects.filter(city__iexact=last_location).first()
+            last_location_temp = get_temp([city.lat, city.lng])
+
+        city_names = [fav_record.city1, fav_record.city2, fav_record.city3, fav_record.city4]
+        for name in city_names:
+            if name:
+                city_obj = Worldcities.objects.filter(city__iexact=name).first()
+                if city_obj:
+                    temp = get_temp([city_obj.lat, city_obj.lng])
+                else:
+                    temp = None
+                cities.append(name)
+                temps.append(temp)
+            else:
+                cities.append(None)
+                temps.append(None)
+    else:
+        cities = [None] * 4
+        temps = [None] * 4
 
     return render(request, 'index.html', {
-        'fav_city': fav_city,
-        'fav_city_temp': temp
+        'last_location_temp' : last_location_temp,
+        'last_location' : last_location,
+        'cities': zip(range(1, 5), cities, temps)
     })
 
+@require_GET
+@csrf_exempt
+@login_required
+def search_city(request):
+    city_query = request.GET.get('city', '').strip().lower()
+    slot = request.GET.get('slot')  # Expected: "1", "2", "3", or "4"
+
+    if not city_query or slot not in ['1', '2', '3', '4']:
+        return JsonResponse({'found': False})
+
+    city = Worldcities.objects.filter(city__iexact=city_query).first()
+    fav_record = UserCities.objects.filter(user=request.user).first()
+    cities = []
+    if fav_record:
+        city_names = [fav_record.city1, fav_record.city2, fav_record.city3, fav_record.city4]
+        for name in city_names:
+            if name:
+                cities.append(name)
+            else:
+                cities.append(None)
+    else:
+        cities = [None] * 4
+    print(cities)
+    print(city)
+    if city:
+        if city.city in cities:
+            return JsonResponse({'found': True, 'city': city.city, 'exists': True, 'message': 'City already added.'})
+
+        fav_record, _ = UserCities.objects.get_or_create(user=request.user)
+        setattr(fav_record, f'city{slot}', city.city)
+        fav_record.save()
+
+        temp = get_temp([city.lat, city.lng])
+        return JsonResponse({'found': True, 'city': city.city, 'temp': temp})
+
+    return JsonResponse({'found': False})
 
 def staff_only(user):
     return user.is_authenticated and user.is_staff
@@ -50,24 +112,23 @@ def login_page(request):
     if request.method == "POST":
         username = request.POST.get('username')
         password = request.POST.get('password')
-        next_url = request.GET.get('next') or request.POST.get('next')  # Handle both GET and POST
+        next_url = request.GET.get('next') or request.POST.get('next')
 
         user = authenticate(username=username, password=password)
 
         if user is None:
             messages.error(request, "Invalid credentials")
-            return redirect('/login/')  # You might want to keep 'next' here too
+            return redirect('/login/')
 
         login(request, user)
 
-        # Handle redirection after login
         if next_url:
             if user.is_staff:
                 return redirect(next_url)
             else:
                 return redirect('/permission-denied/')
         else:
-            return redirect('/home')  # Default landing
+            return redirect('/home')
 
     # GET request
     next_url = request.GET.get('next', '')
@@ -83,15 +144,12 @@ def register_page(request):
         username = request.POST.get('username')
         password = request.POST.get('password')
 
-        # Check if a user with the provided username already exists
         user = User.objects.filter(username=username)
 
         if user.exists():
-            # Display an information message if the username is taken
             messages.info(request, "Username already taken!")
             return redirect('/register/')
 
-        # Create a new User object with the provided information
         user = User.objects.create_user(
             first_name=first_name,
             last_name=last_name,
@@ -99,125 +157,130 @@ def register_page(request):
             username=username
         )
 
-        # Set the user's password and save the user object
         user.set_password(password)
         user.save()
 
-        # Display an information message indicating successful account creation
         messages.info(request, 'Account created Successfully! Please <a href="/login/">click here</a> to login.')
         return redirect('/register/')
 
-    # Render the registration page template (GET request)
     return render(request, 'registration/register.html')
 
+def get_city_name(lat, lon):
+    url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json"
+    response = requests.get(url, headers={"User-Agent": "weather-app"})
+    if response.status_code == 200:
+        data = response.json()
+        address = data.get("address", {})
+        city = address.get("city") or address.get("town") or address.get("village")
+        return city
+    else:
+        return None
+
+def get_weather_data(lat, lon):
+    today = date.today()
+    start_date = today - timedelta(days=1)
+    end_date = today + timedelta(days=1)
+
+    url = (
+        f"https://api.open-meteo.com/v1/forecast?"
+        f"latitude={lat}&longitude={lon}"
+        f"&daily=temperature_2m_max"
+        f"&timezone=auto"
+        f"&start_date={start_date}&end_date={end_date}"
+    )
+
+    response = requests.get(url)
+    if response.status_code == 200:
+        data = response.json()
+        temps = data["daily"]["temperature_2m_max"]
+        return {
+            "yesterday": temps[0],
+            "today": temps[1],
+            "tomorrow": temps[2],
+        }
+    else:
+        return None
 
 
-def temp_somewhere(request):
-    random_city = Worldcities.objects.order_by('?').first()
-    city_name = random_city.city
-    temp = get_temp([random_city.lat, random_city.lng])
+def random_city_view(request):
+    cities = list(Worldcities.objects.all())
+    if not cities:
+        return render(request, 'random_city.html', {'error': 'No cities in database.'})
 
-    random_cities = list(Worldcities.objects.exclude(city=city_name).order_by('?')[:20])
+    city = random.choice(cities)
 
-    similar_cities = [city.city for city in random_cities if get_temp([city.lat, city.lng]) == temp][:5]
-    if not similar_cities:
-        return temp_somewhere(request)
+    weather = get_weather_data(city.lat, city.lng)
+    if not weather:
+        return render(request, 'random_city.html', {'error': 'Could not fetch weather data.'})
 
-    temp_city_map = defaultdict(list)
-    for city in random_cities:
-        city_temp = get_temp([city.lat, city.lng])
-        temp_city_map[city_temp].append(city.city)
-
-    temp_chart_data = list(temp_city_map.items())[:5]
-
-    return render(request, "meteo.html", {
-        "city": city_name,
-        "temp": temp,
-        "similar_cities": similar_cities,
-        "temp_chart_data": temp_chart_data
+    return render(request, 'random_city.html', {
+        "city": city.city,
+        "yesterday": weather["yesterday"],
+        "today": weather["today"],
+        "tomorrow": weather["tomorrow"],
+        "date_today": date.today()
     })
 
-def temp_here(request):
+def my_meteo(request):
     location = geocoder.ip('me').latlng
-    temp = get_temp(location)
+    my_temp = get_weather_data(location[0], location[1])
+    template = loader.get_template('my_meteo.html')
 
-    random_cities = list(Worldcities.objects.exclude(city='Your location').order_by('?')[:20])
-
-    similar_cities = [city.city for city in random_cities if get_temp([city.lat, city.lng]) == temp][:5]
-    if not similar_cities:
-        return temp_somewhere(request)
-
-    temp_city_map = defaultdict(list)
-    for city in random_cities:
-        city_temp = get_temp([city.lat, city.lng])
-        temp_city_map[city_temp].append(city.city)
-
-    temp_chart_data = list(temp_city_map.items())[:5]
-
-    template = loader.get_template('meteo.html')
+    location_name = get_city_name(location[0], location[1])
+    UserLastLocation.objects.create(user=request.user, location_name=location_name)
+    #print("location name: " + location_name)
     context = {
-        'city': 'Your location',
-        'temp': temp,
-        'similar_cities': similar_cities,
-        'temp_chart_data': temp_chart_data
+        "location_name": location_name,
+        "temp": my_temp,
+        "yesterday": my_temp["yesterday"],
+        "today": my_temp["today"],
+        "tomorrow": my_temp["tomorrow"],
+        "date_today": date.today()
     }
-
     return HttpResponse(template.render(context, request))
 
-
-
-def get_temp(location):
-    """Fetch the current temperature from Open-Meteo API and return the rounded integer."""
+def get_temp(location, max_retries=5, retry_delay=1):
     endpoint = "http://api.open-meteo.com/v1/forecast"
     api_request = f"{endpoint}?latitude={location[0]}&longitude={location[1]}&hourly=temperature_2m"
-    now = datetime.now()
-    hour = now.hour
-    meteo_data = requests.get(api_request).json()
-    temp = round(meteo_data['hourly']['temperature_2m'][hour])  # Round temperature to nearest integer
-    return temp
 
+    # Retry logic setup
+    session = requests.Session()
+    retries = Retry(total=3, backoff_factor=0.1)  # Reduced backoff factor for quicker retries
+    session.mount('http://', HTTPAdapter(max_retries=retries))
 
-def temp_chart(request, temp):
-    sampled_cities = Worldcities.objects.order_by('?')[:20]  # Get 50 random cities
-    matching_cities = [city.city for city in sampled_cities if get_temp([city.lat, city.lng]) == temp]
+    attempt = 0
+    while attempt < max_retries:
+        try:
+            # Send request with a 5-second timeout
+            response = session.get(api_request, timeout=5)
+            response.raise_for_status()  # Will raise an error for 4xx/5xx responses
+            meteo_data = response.json()
 
-    # Limit to 5 cities
-    matching_cities = matching_cities[:5]
+            # Get the current hour's temperature
+            now = datetime.now()
+            hour = now.hour
+            temp = round(meteo_data['hourly']['temperature_2m'][hour])
 
-    chart_data = {
-        "labels": [f"{temp}°C"] * len(matching_cities),
-        "data": [len(matching_cities)]
-    }
+            return temp
 
-    return JsonResponse(chart_data)
+        except requests.exceptions.RequestException as e:
+            attempt += 1
+            print(f"[WARN] Attempt {attempt} failed: {e}")
+            if attempt >= max_retries:
+                print("[ERROR] Max retries reached. Could not fetch temperature.")
+                return None  # Fallback when max retries reached
 
-@require_GET
-@csrf_exempt
-@login_required
-def search_city(request):
-    city_query = request.GET.get('city', '').strip().lower()
-    if not city_query:
-        return JsonResponse({'found': False})
+            # Wait a shorter time before retrying
+            print(f"[INFO] Retrying in {retry_delay} second(s)...")
+            time.sleep(retry_delay)  # Wait before retrying
 
-    city = Worldcities.objects.filter(city__iexact=city_query).first()
-
-    if city:
-        FavouriteCity.objects.update_or_create(
-            user=request.user,
-            defaults={'city': city.city}
-        )
-        temp = get_temp([city.lat, city.lng])
-
-        return JsonResponse({'found': True, 'city': city.city, 'temp': temp})
-
-    return JsonResponse({'found': False})
 
 @login_required(login_url='/login/')
 @user_passes_test(lambda u: u.is_staff, login_url='/permission-denied/')
 def delete_user(request, user_id):
     user = get_object_or_404(User, id=user_id)
     if user != request.user:
-        FavouriteCity.objects.filter(user=user).delete()
+        UserCities.objects.filter(user=user).delete()
         user.delete()
         messages.success(request, 'User deleted successfully.')
     else:

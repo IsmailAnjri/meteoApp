@@ -14,11 +14,10 @@ urlpatterns = [
     path('admin_dashboard/', views.admin_page, name="admin_dash"),
     path('delete_user/<int:user_id>/', views.delete_user, name='delete_user'),
     path('permission-denied/', views.permission_denied, name='permission_denied'),
-    path('login/', views.login_page, name='login_page'),    # Login page
-    path('register/', views.register_page, name='register'),  # Registration page
-    path("meteo/", views.temp_here, name="temp_here"),
-    path("meteo/discover", views.temp_somewhere, name="temp_somewhere"),
-    path("meteo/chart/<int:temp>/", views.temp_chart, name="temp_chart"),
+    path('login/', views.login_page, name='login_page'),
+    path('register/', views.register_page, name='register'),
+    path("my_meteo/", views.my_meteo, name="my_meteo"),
+    path("random_city/", views.random_city_view, name="random_city"),
     path('search_city/', views.search_city, name='search_city')
 ]
 

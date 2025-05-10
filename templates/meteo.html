@@ -7,6 +7,7 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
     {% load static %}
     <link rel="stylesheet" href="{% static 'style.css' %}">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
 </head>
 <body>
 <div class="container text-center">
@@ -16,11 +17,57 @@
                 {% csrf_token %}
                 <button type="submit" class="logout-btn">Log Out</button>
         </form>
-        <h1>{{ city }}</h1>
-        <h2>Temperature: {{ temp }} &#8451;</h2>
+        {% if error %}
+        <p style="color: red;">{{ error }}</p>
+    {% else %}
+        <h1>Weather in {{ city }} ({{ date_today }})</h1>
+        <p><strong>Current temperature:</strong> {{ today }}°C</p>
+
+        <canvas id="tempChart" width="400" height="200"></canvas>
+        <script>
+            const ctx = document.getElementById('tempChart').getContext('2d');
+            const tempChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: ['Yesterday', 'Today', 'Tomorrow'],
+                    datasets: [{
+                        label: 'Temperature (°C)',
+                        data: [{{ yesterday }}, {{ today }}, {{ tomorrow }}],
+                        borderColor: 'blue',
+                        backgroundColor: 'rgba(0, 0, 255, 0.1)',
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 5,
+                        pointHoverRadius: 7
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            display: true
+                        },
+                        tooltip: {
+                            enabled: true
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: false,
+                            title: {
+                                display: true,
+                                text: '°C'
+                            }
+                        }
+                    }
+                }
+            });
+        </script>
+
+    {% endif %}
         <button type="button" class="btn btn-danger" onclick="location.href='/home'">Back to Home</button>
-        <button type="button" class="btn btn-secondary" onclick="location.href='/meteo/discover'">Check other places</button>
-        <button type="button" class="btn btn-primary" onclick="location.href='/meteo/'">Your Location</button>
+        <button type="button" class="btn btn-secondary" onclick="location.href='/meteo/'">Check other places</button>
+        <button type="button" class="btn btn-primary" onclick="location.href='/my_meteo/'">Your Location</button>
     {% else %}
         <p>You are not logged in</p>
         <a href="{% url 'login' %}">Log In</a>
@@ -28,68 +75,5 @@
     {% endif %}
     {% endblock %}
 </div>
-
-<div class="container text-center">
-    <h3 class="mt-4">Cities with {{ temp }}°C</h3>
-    <ul>
-        {% for city in similar_cities %}
-            <li>{{ city }}</li>
-        {% endfor %}
-    </ul>
-
-    <h3 class="mt-4">Other Temperature Distributions</h3>
-    <canvas id="tempChart"></canvas>
-</div>
-
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script>
-document.addEventListener("DOMContentLoaded", function() {
-    const ctx = document.getElementById('tempChart').getContext('2d');
-
-    const labels = [];
-    const data = [];
-    const cityNames = [];
-
-    {% for temp, cities in temp_chart_data %}
-        labels.push("{{ temp }}°C");
-        data.push({{ cities|length }});
-        cityNames.push("{{ cities|join:', ' }}");
-    {% endfor %}
-
-    new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: 'Number of Cities',
-                data: data,
-                backgroundColor: 'rgba(54, 162, 235, 0.5)',
-                borderColor: 'rgba(54, 162, 235, 1)',
-                borderWidth: 1
-            }]
-        },
-        options: {
-            responsive: true,
-            plugins: {
-                tooltip: {
-                    callbacks: {
-                        label: function(context) {
-                            let index = context.dataIndex;
-                            return cityNames[index];
-                        }
-                    }
-                }
-            },
-            scales: {
-                y: {
-                    beginAtZero: true
-                }
-            }
-        }
-    });
-});
-</script>
-
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
