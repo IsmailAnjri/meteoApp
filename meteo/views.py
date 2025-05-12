@@ -1,6 +1,11 @@
 import time
 from datetime import datetime, date, timedelta
 import random
+import exifread
+from datetime import date
+from .models import LocationPictures
+from django.shortcuts import render
+from django.core.files.storage import default_storage
 
 import geocoder
 import requests
@@ -160,8 +165,8 @@ def register_page(request):
         user.set_password(password)
         user.save()
 
-        messages.info(request, 'Account created Successfully! Please <a href="/login/">click here</a> to login.')
-        return redirect('/register/')
+        messages.info(request, 'Account created Successfully! Enter your credentials to login.')
+        return redirect('/login/')
 
     return render(request, 'registration/register.html')
 
@@ -220,6 +225,92 @@ def random_city_view(request):
         "tomorrow": weather["tomorrow"],
         "date_today": date.today()
     })
+
+def get_gps_coords_with_id(file):
+    tags = exifread.process_file(file)
+
+    def _get_if_exist(data, key):
+        return data.get(key)
+
+    def _convert_to_degress(value):
+        d, m, s = [float(x.num) / float(x.den) for x in value.values]
+        return d + (m / 60.0) + (s / 3600.0)
+
+    lat_ref = _get_if_exist(tags, 'GPS GPSLatitudeRef')
+    lat = _get_if_exist(tags, 'GPS GPSLatitude')
+    lon_ref = _get_if_exist(tags, 'GPS GPSLongitudeRef')
+    lon = _get_if_exist(tags, 'GPS GPSLongitude')
+
+    # Identifier options
+    unique_id = _get_if_exist(tags, 'Image UniqueID')
+    datetime = _get_if_exist(tags, 'EXIF DateTimeOriginal')
+    camera_model = _get_if_exist(tags, 'Image Model')
+
+    identifier = unique_id or datetime or camera_model or "No ID available"
+
+    if lat and lon and lat_ref and lon_ref:
+        lat = _convert_to_degress(lat)
+        if lat_ref.values != 'N':
+            lat = -lat
+
+        lon = _convert_to_degress(lon)
+        if lon_ref.values != 'E':
+            lon = -lon
+
+        return {
+            "latitude": lat,
+            "longitude": lon,
+            "identifier": str(identifier)
+        }
+    else:
+        return None
+
+def upload_city_view(request):
+    if request.method == 'POST' and request.FILES.get('photo'):
+        image = request.FILES['photo']
+        title = request.POST.get('title', image.name)
+
+        allowed_types = ['image/jpeg', 'image/png']
+        if image.content_type not in allowed_types:
+            return render(request, 'upload_city.html', {'error': 'Invalid file type. Only JPG and PNG allowed.'})
+
+        temp_path = default_storage.save(f'temp/{image.name}', image)
+        with default_storage.open(temp_path, 'rb') as f:
+            gps_info = get_gps_coords_with_id(f)
+
+        if not gps_info:
+            return render(request, 'upload_city.html', {'error': 'Image has no GPS data.'})
+
+        identifier = gps_info['identifier']
+        lat = str(gps_info['latitude'])
+        lon = str(gps_info['longitude'])
+
+        if not LocationPictures.objects.filter(title=identifier).exists():
+            picture = LocationPictures.objects.create(
+                title=identifier,
+                image=image,
+                latitude=lat,
+                longitude=lon
+            )
+        else:
+            picture = LocationPictures.objects.get(title=identifier)
+
+        weather = get_weather_data(picture.latitude, picture.longitude)
+        if not weather:
+            return render(request, 'upload_city.html', {'error': 'Could not fetch weather data.'})
+
+        location_name = get_city_name(picture.latitude, picture.longitude)
+        return render(request, 'upload_city.html', {
+            'city': location_name,
+            'yesterday': weather["yesterday"],
+            'today': weather["today"],
+            'tomorrow': weather["tomorrow"],
+            'date_today': date.today(),
+            'photo': picture
+        })
+
+    return render(request, 'upload_city.html')
+
 
 def my_meteo(request):
     location = geocoder.ip('me').latlng

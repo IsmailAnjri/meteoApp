@@ -18,6 +18,7 @@ urlpatterns = [
     path('register/', views.register_page, name='register'),
     path("my_meteo/", views.my_meteo, name="my_meteo"),
     path("random_city/", views.random_city_view, name="random_city"),
+    path("upload_city/", views.upload_city_view, name="upload_city"),
     path('search_city/', views.search_city, name='search_city')
 ]
 
