@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en" class="body_large">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Meteo</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    {% load static %}
+    <link rel="stylesheet" href="{% static 'style.css' %}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+</head>
+<body>
+<div class="container text-center">
+    {% block content %}
+    {% if user.is_authenticated %}
+        <form action="{% url 'logout' %}" method="post">
+                {% csrf_token %}
+                <button type="submit" class="logout-btn">Log Out</button>
+        </form>
+        {% if error %}
+        <p style="color: red;">{{ error }}</p>
+    {% else %}
+        <h1>Weather in your location (<span style="color: dodgerblue;">{{ location_name }}</span>)</h1>
+        <h2>({{ date_today }})</h2>
+        <p><strong>Current temperature:</strong> {{ today }}°C</p>
+        <canvas id="tempChart" width="400" height="200"></canvas>
+        <script>
+            const ctx = document.getElementById('tempChart').getContext('2d');
+            const tempChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: ['Yesterday', 'Today', 'Tomorrow'],
+                    datasets: [{
+                        label: 'Temperature (°C)',
+                        data: [{{ yesterday }}, {{ today }}, {{ tomorrow }}],
+                        borderColor: 'blue',
+                        backgroundColor: 'rgba(0, 0, 255, 0.1)',
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 5,
+                        pointHoverRadius: 7
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            display: true
+                        },
+                        tooltip: {
+                            enabled: true
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: false,
+                            title: {
+                                display: true,
+                                text: '°C'
+                            }
+                        }
+                    }
+                }
+            });
+        </script>
+    {% endif %}
+        <button type="button" class="btn btn-danger" onclick="location.href='/home'">Back to Home</button>
+        <button type="button" class="btn btn-secondary" onclick="location.href='/random_city/'">Check a random location</button>
+    {% else %}
+        <p>You are not logged in</p>
+        <a href="{% url 'login' %}">Log In</a>
+        <p>Don't have an account <a href="/register/">Register</a> </p>
+    {% endif %}
+    {% endblock %}
+</div>
+</body>
+</html>
